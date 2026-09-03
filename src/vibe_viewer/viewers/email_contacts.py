@@ -11,7 +11,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout
 
 from vibe_viewer.viewers.base import BaseViewer, ViewerError
-from vibe_viewer.viewers.helpers import read_text_safely
+from vibe_viewer.viewers.helpers import read_prefix, read_text_safely
 
 
 class MessageAndContactViewer(BaseViewer):
@@ -105,7 +105,7 @@ class MessageAndContactViewer(BaseViewer):
 
     @staticmethod
     def _render_pst(path: Path) -> tuple[str, str]:
-        signature = path.read_bytes()[:32]
+        signature = read_prefix(path, 32)
         if not signature.startswith(b"!BDN"):
             raise ViewerError("Неверная сигнатура Outlook PST")
         return f"<pre>{html.escape(signature.hex(' '))}</pre>", f"Outlook PST • {path.stat().st_size} байт • безопасный просмотр заголовка"

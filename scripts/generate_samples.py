@@ -18,6 +18,31 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "samples" / "generated"
 
 
+def write_3mf_sample(path: Path) -> None:
+    """Write a compact standards-based 3MF package without optional exporters."""
+    content_types = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>"""
+    relationships = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>"""
+    model = """<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="ru-RU" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1" type="model"><mesh>
+    <vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/></vertices>
+    <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+  </mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", relationships)
+        archive.writestr("3D/3dmodel.model", model)
+
+
 def write_text_samples() -> None:
     (OUTPUT / "hello.txt").write_text("Привет, Vibe Viewer!\nUniversal file preview.\n", encoding="utf-8")
     (OUTPUT / "example.md").write_text(
@@ -160,6 +185,7 @@ def write_extended_binary_samples() -> None:
     struct.pack_into("<I", cab, 16, 36)
     cab[24:26] = bytes((3, 1))
     (OUTPUT / "archive.cab").write_bytes(cab)
+    write_3mf_sample(OUTPUT / "model.3mf")
 
 
 def write_optional_samples() -> None:
@@ -179,7 +205,7 @@ def write_optional_samples() -> None:
         import trimesh
 
         mesh = trimesh.creation.box()
-        for extension in ("stl", "glb", "3mf"):
+        for extension in ("stl", "glb"):
             mesh.export(OUTPUT / f"model.{extension}")
     except (ImportError, ValueError):
         pass

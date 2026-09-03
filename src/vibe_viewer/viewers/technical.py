@@ -11,11 +11,12 @@ from pathlib import Path
 from PyQt6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout
 
 from vibe_viewer.viewers.base import BaseViewer, ViewerError
+from vibe_viewer.viewers.helpers import read_prefix, read_text_safely
 
 
 def _safe_strings(path: Path, limit: int = 8 * 1024 * 1024) -> list[str]:
     """Extract printable strings without executing or importing the file."""
-    data = path.read_bytes()[:limit]
+    data = read_prefix(path, limit)
     result: list[str] = []
     current = bytearray()
     for byte in data:
@@ -80,31 +81,36 @@ class ModelViewer(TechnicalTextViewer):
         suffix = path.suffix.lower()
         try:
             if suffix == ".obj":
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                text, _, _ = read_text_safely(path)
+                lines = text.splitlines()
                 vertices = sum(line.startswith("v ") for line in lines)
                 normals = sum(line.startswith("vn ") for line in lines)
                 textures = sum(line.startswith("vt ") for line in lines)
                 faces = sum(line.startswith("f ") for line in lines)
                 details = [f"Вершин: {vertices}", f"Нормалей: {normals}", f"Текстурных координат: {textures}", f"Граней: {faces}"]
             elif suffix == ".off":
-                lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip() and not line.startswith("#")]
+                text, _, _ = read_text_safely(path)
+                lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
                 counts = lines[1].split() if len(lines) > 1 else []
                 details = [f"Вершин: {counts[0]}", f"Граней: {counts[1]}", f"Рёбер: {counts[2]}"] if len(counts) >= 3 else ["Заголовок OFF повреждён"]
             elif suffix == ".ply":
-                header = path.read_bytes()[:1024 * 1024].split(b"end_header", 1)[0].decode("ascii", errors="replace")
+                header = read_prefix(path, 1024 * 1024).split(b"end_header", 1)[0].decode("ascii", errors="replace")
                 details = [line for line in header.splitlines() if line.startswith(("format ", "element ", "property ", "comment "))]
             elif suffix == ".stl":
-                data = path.read_bytes()
-                if len(data) >= 84 and len(data) == 84 + int.from_bytes(data[80:84], "little") * 50:
+                data = read_prefix(path, 8 * 1024 * 1024)
+                if len(data) >= 84 and path.stat().st_size == 84 + int.from_bytes(data[80:84], "little") * 50:
                     details = ["Формат: binary STL", f"Треугольников: {int.from_bytes(data[80:84], 'little')}"]
                 else:
                     text = data.decode("ascii", errors="replace")
                     details = ["Формат: ASCII STL", f"Треугольников: {text.lower().count('facet normal')}"]
             elif suffix == ".gltf":
-                document = json.loads(path.read_text(encoding="utf-8"))
+                text, _, truncated = read_text_safely(path)
+                if truncated:
+                    raise ViewerError("glTF JSON превышает лимит предпросмотра 8 МБ")
+                document = json.loads(text)
                 details = self._gltf_details(document)
             elif suffix == ".glb":
-                data = path.read_bytes()
+                data = read_prefix(path, 8 * 1024 * 1024)
                 if len(data) < 20 or data[:4] != b"glTF":
                     raise ViewerError("Неверная сигнатура GLB")
                 version, total_size = struct.unpack_from("<II", data, 4)
@@ -147,7 +153,7 @@ class BinaryStructureViewer(TechnicalTextViewer):
 
     def load_file(self, path: Path) -> None:
         suffix = path.suffix.lower()
-        data = path.read_bytes()[:64]
+        data = read_prefix(path, 64)
         lines = [f"Размер: {path.stat().st_size} байт", f"Заголовок: {data.hex(' ')}"]
         try:
             if suffix in {".exe", ".dll", ".sys"}:
@@ -215,7 +221,11 @@ class PackageMetadataViewer(TechnicalTextViewer):
         try:
             import bencodepy
 
-            value = bencodepy.decode(path.read_bytes())
+            limit = 32 * 1024 * 1024
+            data = read_prefix(path, limit + 1)
+            if len(data) > limit:
+                raise ViewerError("Torrent превышает лимит предпросмотра 32 МБ")
+            value = bencodepy.decode(data)
 
             def normalize(item):
                 if isinstance(item, bytes):

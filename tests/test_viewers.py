@@ -6,6 +6,7 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
+from scripts.generate_samples import write_3mf_sample
 from vibe_viewer.viewers.archive import ArchiveViewer
 from vibe_viewer.viewers.data import DataViewer
 from vibe_viewer.viewers.special_text import GeoDataViewer, PlaylistViewer, SubtitleViewer
@@ -142,6 +143,16 @@ def test_capture_viewer_reads_pcap(qtbot, tmp_path: Path) -> None:
 def test_model_viewer_opens_obj(qtbot, tmp_path: Path) -> None:
     path = tmp_path / "triangle.obj"
     path.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+    viewer = ModelViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "3D" in viewer.info.text()
+
+
+def test_generated_3mf_is_valid_and_viewable(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "triangle.3mf"
+    write_3mf_sample(path)
+    assert zipfile.is_zipfile(path)
     viewer = ModelViewer()
     qtbot.addWidget(viewer)
     viewer.load_file(path)

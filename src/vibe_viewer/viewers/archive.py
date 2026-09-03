@@ -13,7 +13,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QLabel, QTableWidget, QVBoxLayout
 
 from vibe_viewer.viewers.base import BaseViewer, ViewerError
-from vibe_viewer.viewers.helpers import fill_table
+from vibe_viewer.viewers.helpers import fill_table, read_prefix
 
 MAX_ARCHIVE_MEMBERS = 5_000
 
@@ -196,19 +196,24 @@ class ArchiveViewer(BaseViewer):
 
     @staticmethod
     def _ar_rows(path: Path):
-        data, offset, rows, total = path.read_bytes(), 8, [], 0
-        if not data.startswith(b"!<arch>\n"):
-            raise ViewerError("Неверная сигнатура AR")
-        while offset + 60 <= len(data) and len(rows) < MAX_ARCHIVE_MEMBERS:
-            header = data[offset:offset + 60]
-            name = header[:16].decode("ascii", errors="replace").strip().rstrip("/")
-            try:
-                size = int(header[48:58].decode("ascii").strip())
-            except ValueError:
-                break
-            rows.append((name, _human_size(size), "—", "—", "файл"))
-            total += size
-            offset += 60 + size + size % 2
+        rows, total = [], 0
+        with path.open("rb") as stream:
+            if stream.read(8) != b"!<arch>\n":
+                raise ViewerError("Неверная сигнатура AR")
+            while len(rows) < MAX_ARCHIVE_MEMBERS:
+                header = stream.read(60)
+                if not header:
+                    break
+                if len(header) != 60 or header[58:60] != b"`\n":
+                    raise ViewerError("Повреждён заголовок AR")
+                name = header[:16].decode("ascii", errors="replace").strip().rstrip("/")
+                try:
+                    size = int(header[48:58].decode("ascii").strip())
+                except ValueError as exc:
+                    raise ViewerError("Повреждён размер элемента AR") from exc
+                rows.append((name, _human_size(size), "—", "—", "файл"))
+                total += size
+                stream.seek(size + size % 2, 1)
         return rows, total
 
     @staticmethod
@@ -233,7 +238,7 @@ class ArchiveViewer(BaseViewer):
             try:
                 import lz4.frame
             except ImportError as exc:
-                header = path.read_bytes()[:32]
+                header = read_prefix(path, 32)
                 if not header.startswith(b"\x04\x22\x4d\x18"):
                     raise ViewerError("Неверная сигнатура LZ4 Frame") from exc
                 size = path.stat().st_size
@@ -245,28 +250,35 @@ class ArchiveViewer(BaseViewer):
     @staticmethod
     def _cpio_rows(path: Path):
         """List portable SVR4 'newc' CPIO members."""
-        data, offset, rows, total = path.read_bytes(), 0, [], 0
-        while offset + 110 <= len(data) and len(rows) < MAX_ARCHIVE_MEMBERS:
-            header = data[offset:offset + 110]
-            if header[:6] not in {b"070701", b"070702"}:
-                if not rows:
-                    raise ViewerError("Поддерживается CPIO в формате newc/crc")
-                break
-            try:
-                mode = int(header[14:22], 16)
-                mtime = int(header[46:54], 16)
-                size = int(header[54:62], 16)
-                name_size = int(header[94:102], 16)
-            except ValueError as exc:
-                raise ViewerError("Повреждён заголовок CPIO") from exc
-            offset += 110
-            name = data[offset:offset + name_size - 1].decode("utf-8", errors="replace")
-            offset = (offset + name_size + 3) & ~3
-            if name == "TRAILER!!!":
-                break
-            rows.append((name, _human_size(size), "—", datetime.fromtimestamp(mtime).isoformat(sep=" ", timespec="minutes"), "папка" if mode & 0o170000 == 0o040000 else "файл"))
-            total += size
-            offset = (offset + size + 3) & ~3
+        rows, total = [], 0
+        with path.open("rb") as stream:
+            while len(rows) < MAX_ARCHIVE_MEMBERS:
+                header = stream.read(110)
+                if not header:
+                    break
+                if len(header) != 110 or header[:6] not in {b"070701", b"070702"}:
+                    if not rows:
+                        raise ViewerError("Поддерживается CPIO в формате newc/crc")
+                    break
+                try:
+                    mode = int(header[14:22], 16)
+                    mtime = int(header[46:54], 16)
+                    size = int(header[54:62], 16)
+                    name_size = int(header[94:102], 16)
+                except ValueError as exc:
+                    raise ViewerError("Повреждён заголовок CPIO") from exc
+                if name_size < 1 or name_size > 1024 * 1024:
+                    raise ViewerError("Некорректная длина имени CPIO")
+                raw_name = stream.read(name_size)
+                if len(raw_name) != name_size:
+                    raise ViewerError("Неожиданный конец имени CPIO")
+                stream.seek((-(110 + name_size)) % 4, 1)
+                name = raw_name[:-1].decode("utf-8", errors="replace")
+                if name == "TRAILER!!!":
+                    break
+                rows.append((name, _human_size(size), "—", datetime.fromtimestamp(mtime).isoformat(sep=" ", timespec="minutes"), "папка" if mode & 0o170000 == 0o040000 else "файл"))
+                total += size
+                stream.seek(size + (-size) % 4, 1)
         return rows, total
 
     @staticmethod
@@ -274,7 +286,7 @@ class ArchiveViewer(BaseViewer):
         """Show CAB header information without calling platform extractors."""
         import struct
 
-        header = path.read_bytes()[:36]
+        header = read_prefix(path, 36)
         if len(header) < 36 or not header.startswith(b"MSCF"):
             raise ViewerError("Неверная сигнатура Microsoft Cabinet")
         cabinet_size = struct.unpack_from("<I", header, 8)[0]

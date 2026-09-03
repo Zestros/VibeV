@@ -13,6 +13,12 @@ MAX_TABLE_ROWS = 2_000
 MAX_TABLE_COLUMNS = 200
 
 
+def read_prefix(path: Path, limit: int) -> bytes:
+    """Read at most *limit* bytes without materializing the whole file."""
+    with path.open("rb") as stream:
+        return stream.read(limit)
+
+
 def read_text_safely(path: Path, limit: int = MAX_TEXT_BYTES) -> tuple[str, str, bool]:
     """Read text with encoding detection and a hard memory limit."""
     size = path.stat().st_size
@@ -72,4 +78,3 @@ def fill_table(
     table.setAlternatingRowColors(True)
     table.resizeColumnsToContents()
     return len(materialized), column_count, truncated
-

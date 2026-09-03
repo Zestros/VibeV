@@ -59,6 +59,27 @@ def test_pdf_page_is_rendered(qtbot, tmp_path: Path) -> None:
     viewer.unload()
 
 
+def test_postscript_has_builtin_structural_preview(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "document.ps"
+    path.write_text(
+        "%!PS-Adobe-3.0\n"
+        "%%Title: Vibe demo\n"
+        "%%Pages: 1\n"
+        "%%BoundingBox: 0 0 100 100\n"
+        "%%Page: 1 1\n"
+        "/Times-Roman findfont 12 scalefont setfont\n"
+        "10 50 moveto (Visible PostScript text) show\n"
+        "showpage\n",
+        encoding="ascii",
+    )
+    viewer = DocumentViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "PostScript" in viewer.info.text()
+    assert "Vibe demo" in viewer.page_label.text()
+    assert "Visible PostScript text" in viewer.page_label.text()
+
+
 def test_docx_content_is_rendered(qtbot, tmp_path: Path) -> None:
     path = tmp_path / "document.docx"
     document = Document()
@@ -83,3 +104,34 @@ def test_xlsx_sheet_is_rendered(qtbot, tmp_path: Path) -> None:
     assert viewer.table.rowCount() == 2
     assert viewer.table.item(1, 0).text() == "PDF"
     viewer.unload()
+
+
+def test_dif_table_is_decoded(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "table.dif"
+    path.write_text(
+        'TABLE\n0,1\n"Vibe"\nVECTORS\n0,2\n""\nTUPLES\n0,2\n""\n'
+        'DATA\n0,0\n""\n-1,0\nBOT\n1,0\n"Name"\n1,0\n"Score"\n'
+        '-1,0\nBOT\n1,0\n"PDF"\n0,10\nV\n-1,0\nEOD\n',
+        encoding="ascii",
+    )
+    viewer = SpreadsheetViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert viewer.table.rowCount() == 2
+    assert viewer.table.item(0, 0).text() == "Name"
+    assert viewer.table.item(1, 1).text() == "10"
+
+
+def test_sylk_table_is_decoded(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "table.slk"
+    path.write_text(
+        'ID;P\nC;X1;Y1;K"Name"\nC;X2;Y1;K"Score"\n'
+        'C;X1;Y2;K"PNG"\nC;X2;Y2;K9\nE\n',
+        encoding="ascii",
+    )
+    viewer = SpreadsheetViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert viewer.table.rowCount() == 2
+    assert viewer.table.item(0, 0).text() == "Name"
+    assert viewer.table.item(1, 1).text() == "9"

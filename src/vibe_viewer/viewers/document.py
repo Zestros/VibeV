@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from vibe_viewer.viewers.base import BaseViewer, ViewerError
+from vibe_viewer.viewers.helpers import read_prefix, read_text_safely
 
 
 class DocumentViewer(BaseViewer):
@@ -78,6 +80,9 @@ class DocumentViewer(BaseViewer):
         if path.suffix.lower() in {".azw", ".azw3", ".djvu", ".djv"}:
             self._load_book_summary(path)
             return
+        if path.suffix.lower() == ".ps":
+            self._load_postscript_summary(path)
+            return
         try:
             import pymupdf
 
@@ -96,7 +101,7 @@ class DocumentViewer(BaseViewer):
 
     def _load_book_summary(self, path: Path) -> None:
         """Show safe metadata and embedded text for formats MuPDF cannot render."""
-        data = path.read_bytes()[:8 * 1024 * 1024]
+        data = read_prefix(path, 8 * 1024 * 1024)
         signature = data[:32].hex(" ")
         strings: list[str] = []
         current = bytearray()
@@ -117,6 +122,63 @@ class DocumentViewer(BaseViewer):
             f"{suffix}: структурный предпросмотр\n\nСигнатура:\n{signature}\n\n"
             + "\n".join(strings[:500])
         )
+        self.page_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+    def _load_postscript_summary(self, path: Path) -> None:
+        """Show PostScript document metadata and printable strings without Ghostscript."""
+        text, encoding, truncated = read_text_safely(path)
+        if not text.lstrip().startswith("%!PS"):
+            raise ViewerError("Неверная сигнатура PostScript")
+
+        def dsc_value(name: str) -> str | None:
+            match = re.search(rf"(?m)^%%{re.escape(name)}:\s*(.+)$", text)
+            return match.group(1).strip() if match else None
+
+        declared_pages = dsc_value("Pages")
+        page_markers = len(re.findall(r"(?m)^%%Page:", text))
+        try:
+            page_count = int((declared_pages or "").split()[0])
+        except (ValueError, IndexError):
+            page_count = page_markers
+
+        strings = []
+        for value in re.findall(r"(?<!\\)\((.*?)(?<!\\)\)", text):
+            cleaned = (
+                value.replace(r"\(", "(")
+                .replace(r"\)", ")")
+                .replace(r"\n", "\n")
+                .replace(r"\r", "\r")
+                .replace(r"\t", "\t")
+                .replace(r"\\", "\\")
+            )
+            if cleaned.strip():
+                strings.append(cleaned)
+            if len(strings) >= 500:
+                break
+
+        details = ["PostScript: структурный предпросмотр"]
+        for label, field in (
+            ("Заголовок", "Title"),
+            ("Автор", "For"),
+            ("Создатель", "Creator"),
+            ("BoundingBox", "BoundingBox"),
+        ):
+            value = dsc_value(field)
+            if value:
+                details.append(f"{label}: {value}")
+        details.append(f"Страниц: {page_count or 'не указано'}")
+        if strings:
+            details.append("\nТекстовые строки:\n" + "\n".join(strings))
+        if truncated:
+            details.append("\nПредпросмотр ограничен первыми 8 МБ.")
+
+        self._path = path
+        self.page_number.setRange(1, 1)
+        self.info.setText(
+            f"{path.name} • PostScript • {encoding} • "
+            f"{page_count or 'неизвестно'} стр. • структурный просмотр"
+        )
+        self.page_label.setText("\n".join(details))
         self.page_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
     def _render_page(self, page_number: int | None = None) -> None:

@@ -175,8 +175,96 @@ class SpreadsheetViewer(BaseViewer):
                     rows = [[cell.v for cell in row] for row in sheet.rows()]
             return rows, None
         text, _, _ = read_text_safely(self._path, limit=16 * 1024 * 1024)
-        delimiter = "\t" if suffix == ".slk" else ","
-        return csv.reader(text.splitlines(), delimiter=delimiter), None
+        if suffix == ".dif":
+            return self._dif_rows(text), None
+        return self._sylk_rows(text), None
+
+    @staticmethod
+    def _dif_rows(text: str) -> list[list[str]]:
+        """Decode the DATA section of a Data Interchange Format table."""
+        lines = text.splitlines()
+        upper_lines = [line.strip().upper() for line in lines]
+        try:
+            data_index = upper_lines.index("DATA")
+        except ValueError as exc:
+            raise ViewerError("В DIF отсутствует секция DATA") from exc
+
+        column_count = 0
+        try:
+            vectors_index = upper_lines.index("VECTORS")
+            column_count = int(lines[vectors_index + 1].split(",", 1)[1])
+        except (ValueError, IndexError):
+            pass
+
+        rows: list[list[str]] = []
+        current: list[str] = []
+        index = data_index + 3
+        while index + 1 < len(lines):
+            descriptor = lines[index].strip()
+            value_line = lines[index + 1].strip()
+            index += 2
+            try:
+                value_type_text, numeric_value = descriptor.split(",", 1)
+                value_type = int(value_type_text)
+            except ValueError:
+                continue
+
+            marker = value_line.strip().strip('"').upper()
+            if value_type == -1:
+                if marker == "BOT":
+                    if current:
+                        rows.append(current)
+                    current = []
+                elif marker == "EOD":
+                    if current:
+                        rows.append(current)
+                    break
+                continue
+
+            if value_type == 1:
+                try:
+                    value = next(csv.reader([value_line]))[0]
+                except (csv.Error, StopIteration):
+                    value = value_line.strip('"')
+            else:
+                value = numeric_value if marker in {"V", "NA", "ERROR"} else value_line.strip('"')
+            current.append(value)
+            if column_count > 0 and len(current) >= column_count:
+                rows.append(current)
+                current = []
+        if current:
+            rows.append(current)
+        return rows
+
+    @staticmethod
+    def _sylk_rows(text: str) -> list[list[str]]:
+        """Decode SYLK C records into a rectangular table."""
+        cells: dict[tuple[int, int], str] = {}
+        current_x = 1
+        current_y = 1
+        for line in text.splitlines():
+            if not line.startswith("C;"):
+                continue
+            fields = line.split(";")[1:]
+            value: str | None = None
+            for field in fields:
+                if field.startswith("X") and field[1:].isdigit():
+                    current_x = int(field[1:])
+                elif field.startswith("Y") and field[1:].isdigit():
+                    current_y = int(field[1:])
+                elif field.startswith("K"):
+                    raw = field[1:]
+                    value = raw[1:-1].replace('""', '"') if len(raw) >= 2 and raw.startswith('"') and raw.endswith('"') else raw
+            if value is not None and current_x > 0 and current_y > 0:
+                cells[(current_y, current_x)] = value
+        if not cells:
+            raise ViewerError("В SYLK не найдены ячейки")
+        max_row = min(max(row for row, _ in cells), 2000)
+        max_column = min(max(column for _, column in cells), 200)
+        return [
+            [cells.get((row, column), "") for column in range(1, max_column + 1)]
+            for row in range(1, max_row + 1)
+        ]
 
     def _odf_rows(self, index: int):
         from odf import teletype
