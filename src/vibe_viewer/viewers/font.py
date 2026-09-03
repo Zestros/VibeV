@@ -15,7 +15,7 @@ class FontViewer(BaseViewer):
     name = "Fonts"
     category = "Fonts"
     priority = 60
-    extensions = (".ttf", ".otf", ".ttc")
+    extensions = (".ttf", ".otf", ".ttc", ".woff", ".woff2", ".pfa", ".pfb", ".bdf")
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -57,4 +57,3 @@ class FontViewer(BaseViewer):
             QFontDatabase.removeApplicationFont(self._font_id)
         self._font_id = -1
         self._family = ""
-

@@ -6,9 +6,12 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
+from scripts.generate_samples import write_3mf_sample
 from vibe_viewer.viewers.archive import ArchiveViewer
 from vibe_viewer.viewers.data import DataViewer
+from vibe_viewer.viewers.special_text import GeoDataViewer, PlaylistViewer, SubtitleViewer
 from vibe_viewer.viewers.spreadsheet import DelimitedTableViewer
+from vibe_viewer.viewers.technical import BinaryStructureViewer, CaptureViewer, ModelViewer
 from vibe_viewer.viewers.text import StructuredTextViewer, TextViewer
 
 
@@ -81,3 +84,76 @@ def test_sqlite_viewer_uses_read_only_database(qtbot, tmp_path: Path) -> None:
     assert viewer.selector.itemText(0) == "demo"
     assert viewer.table.item(0, 0).text() == "answer"
     viewer.unload()
+
+
+def test_subtitle_viewer_builds_timeline(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "demo.srt"
+    path.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+    viewer = SubtitleViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert viewer.table.rowCount() == 1
+    assert viewer.table.item(0, 2).text() == "Hello"
+
+
+def test_playlist_viewer_lists_entries(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "demo.m3u8"
+    path.write_text("#EXTM3U\n#EXTINF:2,Demo\ndemo.wav\n", encoding="utf-8")
+    viewer = PlaylistViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert viewer.table.item(0, 0).text() == "Demo"
+    assert viewer.table.item(0, 1).text() == "demo.wav"
+
+
+def test_geodata_viewer_summarizes_gpx(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "route.gpx"
+    path.write_text('<gpx><trkpt lat="52.28" lon="104.28"/></gpx>', encoding="utf-8")
+    viewer = GeoDataViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "52.28" in viewer.browser.toPlainText()
+
+
+def test_binary_structure_viewer_reads_wasm_header(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "empty.wasm"
+    path.write_bytes(b"\0asm\x01\0\0\0")
+    viewer = BinaryStructureViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "WebAssembly" in viewer.browser.toPlainText()
+
+
+def test_capture_viewer_reads_pcap(qtbot, tmp_path: Path) -> None:
+    import struct
+
+    packet = bytes(60)
+    path = tmp_path / "demo.pcap"
+    path.write_bytes(
+        struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+        + struct.pack("<IIII", 1, 0, len(packet), len(packet))
+        + packet
+    )
+    viewer = CaptureViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "1 пакетов" in viewer.info.text()
+
+
+def test_model_viewer_opens_obj(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "triangle.obj"
+    path.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+    viewer = ModelViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "3D" in viewer.info.text()
+
+
+def test_generated_3mf_is_valid_and_viewable(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "triangle.3mf"
+    write_3mf_sample(path)
+    assert zipfile.is_zipfile(path)
+    viewer = ModelViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "3D" in viewer.info.text()
