@@ -230,8 +230,14 @@ class ArchiveViewer(BaseViewer):
             with path.open("rb") as source, zstandard.ZstdDecompressor().stream_reader(source) as stream:
                 data = stream.read(64 * 1024 * 1024 + 1)
         else:
-            import lz4.frame
-
+            try:
+                import lz4.frame
+            except ImportError as exc:
+                header = path.read_bytes()[:32]
+                if not header.startswith(b"\x04\x22\x4d\x18"):
+                    raise ViewerError("Неверная сигнатура LZ4 Frame") from exc
+                size = path.stat().st_size
+                return [(path.stem, "—", _human_size(size), "—", "LZ4 Frame")], size
             with lz4.frame.open(path, "rb") as stream:
                 data = stream.read(64 * 1024 * 1024 + 1)
         return [(path.stem, _human_size(len(data)), _human_size(path.stat().st_size), "—", "поток")], len(data)

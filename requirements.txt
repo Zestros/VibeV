@@ -33,13 +33,13 @@ h5py==3.16.0
 pydicom==3.0.2
 
 # Extended image, archive, scientific and specialist formats
-rawpy==0.25.1
+rawpy==0.27.1
 imageio==2.37.2
 rarfile==4.2
 pycdlib==1.14.0
 rpmfile==2.1.0
 zstandard==0.25.0
-lz4==4.4.4
+lz4==4.4.4; python_version < "3.14"
 astropy==7.2.0
 netCDF4==1.7.4
 scipy==1.17.1

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import struct
+import zipfile
 from pathlib import Path
 
 from PyQt6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout
@@ -55,17 +56,87 @@ class ModelViewer(TechnicalTextViewer):
         try:
             import trimesh
 
+        except ImportError:
+            self._load_without_trimesh(path)
+            return
+        try:
             loaded = trimesh.load(path, force="scene", process=False)
             geometries = list(loaded.geometry.values())
-            lines = [f"Сцена: {path.name}", f"Объектов: {len(geometries)}"]
-            for index, geometry in enumerate(geometries[:1000], 1):
-                lines.append(
-                    f"{index}. {type(geometry).__name__}: vertices={len(getattr(geometry, 'vertices', []))}, "
-                    f"faces={len(getattr(geometry, 'faces', []))}, bounds={getattr(geometry, 'bounds', None)}"
-                )
-            self.show_text(f"{path.name} • 3D • {len(geometries)} объектов", "\n".join(lines))
+        except Exception:
+            self._load_without_trimesh(path)
+            return
+        lines = [f"Сцена: {path.name}", f"Объектов: {len(geometries)}"]
+        for index, geometry in enumerate(geometries[:1000], 1):
+            lines.append(
+                f"{index}. {type(geometry).__name__}: "
+                f"vertices={len(getattr(geometry, 'vertices', []))}, "
+                f"faces={len(getattr(geometry, 'faces', []))}, "
+                f"bounds={getattr(geometry, 'bounds', None)}"
+            )
+        self.show_text(f"{path.name} • 3D • {len(geometries)} объектов", "\n".join(lines))
+
+    def _load_without_trimesh(self, path: Path) -> None:
+        """Provide a useful preview using only the standard library."""
+        suffix = path.suffix.lower()
+        try:
+            if suffix == ".obj":
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                vertices = sum(line.startswith("v ") for line in lines)
+                normals = sum(line.startswith("vn ") for line in lines)
+                textures = sum(line.startswith("vt ") for line in lines)
+                faces = sum(line.startswith("f ") for line in lines)
+                details = [f"Вершин: {vertices}", f"Нормалей: {normals}", f"Текстурных координат: {textures}", f"Граней: {faces}"]
+            elif suffix == ".off":
+                lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip() and not line.startswith("#")]
+                counts = lines[1].split() if len(lines) > 1 else []
+                details = [f"Вершин: {counts[0]}", f"Граней: {counts[1]}", f"Рёбер: {counts[2]}"] if len(counts) >= 3 else ["Заголовок OFF повреждён"]
+            elif suffix == ".ply":
+                header = path.read_bytes()[:1024 * 1024].split(b"end_header", 1)[0].decode("ascii", errors="replace")
+                details = [line for line in header.splitlines() if line.startswith(("format ", "element ", "property ", "comment "))]
+            elif suffix == ".stl":
+                data = path.read_bytes()
+                if len(data) >= 84 and len(data) == 84 + int.from_bytes(data[80:84], "little") * 50:
+                    details = ["Формат: binary STL", f"Треугольников: {int.from_bytes(data[80:84], 'little')}"]
+                else:
+                    text = data.decode("ascii", errors="replace")
+                    details = ["Формат: ASCII STL", f"Треугольников: {text.lower().count('facet normal')}"]
+            elif suffix == ".gltf":
+                document = json.loads(path.read_text(encoding="utf-8"))
+                details = self._gltf_details(document)
+            elif suffix == ".glb":
+                data = path.read_bytes()
+                if len(data) < 20 or data[:4] != b"glTF":
+                    raise ViewerError("Неверная сигнатура GLB")
+                version, total_size = struct.unpack_from("<II", data, 4)
+                json_size, chunk_type = struct.unpack_from("<II", data, 12)
+                details = [f"Версия glTF: {version}", f"Размер: {total_size} байт"]
+                if chunk_type == 0x4E4F534A:
+                    document = json.loads(data[20:20 + json_size].rstrip(b" \0").decode("utf-8"))
+                    details.extend(self._gltf_details(document))
+            elif suffix == ".3mf":
+                with zipfile.ZipFile(path) as archive:
+                    names = archive.namelist()
+                    models = [name for name in names if name.lower().endswith(".model")]
+                    details = [f"Элементов контейнера: {len(names)}", f"3D-моделей: {len(models)}"] + models[:100]
+            else:
+                raise ViewerError("Неизвестный формат 3D-модели")
+        except ViewerError:
+            raise
         except Exception as exc:
-            raise ViewerError(f"Не удалось открыть 3D-модель: {exc}") from exc
+            raise ViewerError(f"Не удалось разобрать 3D-модель: {exc}") from exc
+        self.show_text(f"{path.name} • 3D • встроенный просмотр", "\n".join(details))
+
+    @staticmethod
+    def _gltf_details(document: dict) -> list[str]:
+        asset = document.get("asset", {})
+        return [
+            f"Версия glTF: {asset.get('version', '—')}",
+            f"Сцен: {len(document.get('scenes', []))}",
+            f"Узлов: {len(document.get('nodes', []))}",
+            f"Мешей: {len(document.get('meshes', []))}",
+            f"Материалов: {len(document.get('materials', []))}",
+            f"Анимаций: {len(document.get('animations', []))}",
+        ]
 
 
 class BinaryStructureViewer(TechnicalTextViewer):
@@ -83,7 +154,7 @@ class BinaryStructureViewer(TechnicalTextViewer):
                 import pefile
 
                 pe = pefile.PE(str(path), fast_load=True)
-                lines.extend((f"Формат: PE", f"Машина: 0x{pe.FILE_HEADER.Machine:04x}", f"Секций: {pe.FILE_HEADER.NumberOfSections}"))
+                lines.extend(("Формат: PE", f"Машина: 0x{pe.FILE_HEADER.Machine:04x}", f"Секций: {pe.FILE_HEADER.NumberOfSections}"))
                 lines.extend(f"Секция: {section.Name.rstrip(bytes([0])).decode(errors='replace')}" for section in pe.sections)
                 pe.close()
             elif suffix in {".elf", ".so", ".o"} or data.startswith(b"\x7fELF"):

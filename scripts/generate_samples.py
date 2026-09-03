@@ -185,8 +185,8 @@ def write_optional_samples() -> None:
         pass
 
     try:
-        from astropy.io import fits
         import numpy as np
+        from astropy.io import fits
 
         fits.PrimaryHDU(np.arange(100, dtype="int16").reshape(10, 10)).writeto(OUTPUT / "image.fits", overwrite=True)
         for extension in ("fts", "fit"):
@@ -206,8 +206,8 @@ def write_optional_samples() -> None:
         pass
 
     try:
-        import scipy.io
         import numpy as np
+        import scipy.io
 
         scipy.io.savemat(OUTPUT / "matrix.mat", {"demo": np.arange(12).reshape(3, 4)})
     except ImportError:
@@ -225,10 +225,16 @@ def write_optional_samples() -> None:
 
     try:
         import zstandard
-        import lz4.frame
 
         data = b"Modern compressed stream sample"
         (OUTPUT / "stream.zst").write_bytes(zstandard.ZstdCompressor().compress(data))
+    except ImportError:
+        pass
+
+    try:
+        import lz4.frame
+
+        data = b"Modern compressed stream sample"
         (OUTPUT / "stream.lz4").write_bytes(lz4.frame.compress(data))
     except ImportError:
         pass
@@ -243,8 +249,8 @@ def write_optional_samples() -> None:
         pass
 
     try:
-        from dbfread import DBF  # noqa: F401 - verifies that the reader is installed
         import shapefile
+        from dbfread import DBF  # noqa: F401 - verifies that the reader is installed
 
         with shapefile.Writer(dbf=str(OUTPUT / "table.dbf")) as writer:
             writer.field("FORMAT", "C")

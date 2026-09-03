@@ -10,8 +10,8 @@ from vibe_viewer.viewers.font import FontViewer
 from vibe_viewer.viewers.image import ImageViewer
 from vibe_viewer.viewers.media import MediaViewer
 from vibe_viewer.viewers.office import OfficeDocumentViewer
-from vibe_viewer.viewers.spreadsheet import DelimitedTableViewer, SpreadsheetViewer
 from vibe_viewer.viewers.special_text import GeoDataViewer, PlaylistViewer, SubtitleViewer
+from vibe_viewer.viewers.spreadsheet import DelimitedTableViewer, SpreadsheetViewer
 from vibe_viewer.viewers.technical import (
     BinaryStructureViewer,
     CaptureViewer,

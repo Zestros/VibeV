@@ -8,10 +8,10 @@ from pathlib import Path
 
 from vibe_viewer.viewers.archive import ArchiveViewer
 from vibe_viewer.viewers.data import DataViewer
-from vibe_viewer.viewers.spreadsheet import DelimitedTableViewer
-from vibe_viewer.viewers.text import StructuredTextViewer, TextViewer
 from vibe_viewer.viewers.special_text import GeoDataViewer, PlaylistViewer, SubtitleViewer
-from vibe_viewer.viewers.technical import BinaryStructureViewer, CaptureViewer
+from vibe_viewer.viewers.spreadsheet import DelimitedTableViewer
+from vibe_viewer.viewers.technical import BinaryStructureViewer, CaptureViewer, ModelViewer
+from vibe_viewer.viewers.text import StructuredTextViewer, TextViewer
 
 
 def test_text_viewer_reads_utf8(qtbot, tmp_path: Path) -> None:
@@ -137,3 +137,12 @@ def test_capture_viewer_reads_pcap(qtbot, tmp_path: Path) -> None:
     qtbot.addWidget(viewer)
     viewer.load_file(path)
     assert "1 пакетов" in viewer.info.text()
+
+
+def test_model_viewer_opens_obj(qtbot, tmp_path: Path) -> None:
+    path = tmp_path / "triangle.obj"
+    path.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+    viewer = ModelViewer()
+    qtbot.addWidget(viewer)
+    viewer.load_file(path)
+    assert "3D" in viewer.info.text()
