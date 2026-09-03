@@ -42,7 +42,6 @@
 ## Быстрый запуск на macOS/Linux
 
 ```bash
-cd /Users/zestros/my_prog/vibe
 make install
 make run
 ```
