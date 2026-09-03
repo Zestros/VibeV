@@ -1,0 +1,14 @@
+PROJECT_NAME           = "Vibe Viewer"
+PROJECT_NUMBER         = "1.0.0"
+OUTPUT_DIRECTORY       = docs
+INPUT                  = src README.md docs/ARCHITECTURE.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.py *.md
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+USE_MDFILE_AS_MAINPAGE = README.md
+QUIET                  = YES
+

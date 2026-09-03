@@ -1,0 +1,35 @@
+services:
+  tests:
+    build: .
+    environment:
+      QT_QPA_PLATFORM: offscreen
+    command: pytest -q
+
+  gui-smoke:
+    build: .
+    environment:
+      QT_QPA_PLATFORM: xcb
+      QT_OPENGL: software
+      QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ","
+      QT_DISABLE_HW_TEXTURES_CONVERSION: "1"
+    command: bash scripts/test_gui_ubuntu.sh
+
+  gui-capture:
+    build: .
+    environment:
+      QT_QPA_PLATFORM: xcb
+      QT_OPENGL: software
+      QT_FFMPEG_DECODING_HW_DEVICE_TYPES: ","
+      QT_DISABLE_HW_TEXTURES_CONVERSION: "1"
+    command: >-
+      bash scripts/test_gui_ubuntu.sh python scripts/capture_ui.py /app/work/ubuntu-ui.png
+    volumes:
+      - ./work:/app/work
+
+  samples:
+    build: .
+    environment:
+      QT_QPA_PLATFORM: offscreen
+    command: python scripts/generate_samples.py
+    volumes:
+      - ./samples:/app/samples
