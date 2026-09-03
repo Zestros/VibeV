@@ -15,6 +15,11 @@
 - безопасный список содержимого ZIP, TAR, GZ, BZ2, XZ и 7Z;
 - SQLite, NumPy, Parquet, Feather, HDF5 и DICOM;
 - EML, MBOX, VCF, ICS, TTF и OTF;
+- RAW/HDR-изображения, RAR/ISO/DEB/RPM и современные потоки Zstandard/LZ4;
+- FITS, NetCDF, MATLAB, SPSS, DBF, ORC, Avro и XLSB;
+- GPX, KML/KMZ, Shapefile, GML и WKT;
+- субтитры, плейлисты, 3D-модели, PCAP и структуры PE/ELF/Java/WASM;
+- Outlook MSG/PST, web-шрифты и BitTorrent-метаданные;
 - HEX-предпросмотр любого неизвестного файла;
 - автоматический список реально зарегистрированных расширений;
 - встроенный выбор папки или файла без macOS-фильтра, скрывающего файлы.
@@ -81,6 +86,8 @@ docker compose run --rm gui-smoke
 
 Откройте `samples/generated`. Скрипт создаёт текст, JSON, YAML, HTML, CSV, ZIP, TAR.GZ,
 SQLite, EML, VCF, ICS, WAV, PNG, WebP, PDF, DOCX, XLSX, PPTX, NPY и NPZ.
+Также создаются доступные без загрузки из сети образцы субтитров, плейлистов, GPX/KML,
+3D-моделей, PCAP, WebAssembly, AR/DEB, FITS, NetCDF, MATLAB и современных архивных потоков.
 
 ## Тесты
 

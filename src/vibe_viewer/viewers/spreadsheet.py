@@ -57,7 +57,10 @@ class SpreadsheetViewer(BaseViewer):
     name = "Spreadsheets"
     category = "Office and spreadsheets"
     priority = 100
-    extensions = (".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".ods", ".ots")
+    extensions = (
+        ".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".ods", ".ots",
+        ".dbf", ".orc", ".avro", ".xlsb", ".dif", ".slk",
+    )
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -90,13 +93,15 @@ class SpreadsheetViewer(BaseViewer):
 
                 self._book = xlrd.open_workbook(path, on_demand=True)
                 names = self._book.sheet_names()
-            else:
+            elif suffix in {".ods", ".ots"}:
                 from odf.opendocument import load
 
                 self._book = load(str(path))
                 from odf.table import Table
 
                 names = [str(table.getAttribute("name") or f"Лист {index + 1}") for index, table in enumerate(self._book.getElementsByType(Table))]
+            else:
+                names = ["Данные"]
         except Exception as exc:
             raise ViewerError(f"Не удалось открыть электронную таблицу: {exc}") from exc
 
@@ -110,18 +115,30 @@ class SpreadsheetViewer(BaseViewer):
             self.info.setText(f"{path.name} • нет листов")
 
     def _show_current_sheet(self, index: int) -> None:
-        if self._book is None or index < 0 or self._path is None:
+        if index < 0 or self._path is None:
             return
         suffix = self._path.suffix.lower()
         try:
             if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+                if self._book is None:
+                    return
                 sheet = self._book[self._book.sheetnames[index]]
                 rows = sheet.iter_rows(values_only=True)
             elif suffix == ".xls":
+                if self._book is None:
+                    return
                 sheet = self._book.sheet_by_index(index)
                 rows = (sheet.row_values(row) for row in range(sheet.nrows))
-            else:
+            elif suffix in {".ods", ".ots"}:
+                if self._book is None:
+                    return
                 rows = self._odf_rows(index)
+            else:
+                rows, headers = self._extended_rows(suffix)
+                row_count, column_count, truncated = fill_table(self.table, rows, headers=headers)
+                note = " • показаны первые 2000 строк" if truncated else ""
+                self.info.setText(f"{self._path.name} • {row_count} строк • {column_count} столбцов{note}")
+                return
             row_count, column_count, truncated = fill_table(self.table, rows)
             note = " • показаны первые 2000 строк" if truncated else ""
             self.info.setText(
@@ -129,6 +146,37 @@ class SpreadsheetViewer(BaseViewer):
             )
         except Exception as exc:
             raise ViewerError(f"Не удалось показать лист: {exc}") from exc
+
+    def _extended_rows(self, suffix: str):
+        if suffix == ".dbf":
+            from dbfread import DBF
+
+            table = DBF(str(self._path), load=False, char_decode_errors="replace")
+            return ([record.get(name) for name in table.field_names] for record in table), table.field_names
+        if suffix == ".orc":
+            import pyarrow.orc as orc
+
+            table = orc.ORCFile(self._path).read()
+            return table.to_pylist_rows() if hasattr(table, "to_pylist_rows") else (tuple(row.values()) for row in table.to_pylist()), table.column_names
+        if suffix == ".avro":
+            from fastavro import reader
+
+            with self._path.open("rb") as stream:
+                records = reader(stream)
+                fields = list(records.writer_schema.get("fields", []))
+                names = [field["name"] for field in fields]
+                rows = [[record.get(name) for name in names] for record in records]
+            return rows, names
+        if suffix == ".xlsb":
+            from pyxlsb import open_workbook
+
+            with open_workbook(str(self._path)) as book:
+                with book.get_sheet(1) as sheet:
+                    rows = [[cell.v for cell in row] for row in sheet.rows()]
+            return rows, None
+        text, _, _ = read_text_safely(self._path, limit=16 * 1024 * 1024)
+        delimiter = "\t" if suffix == ".slk" else ","
+        return csv.reader(text.splitlines(), delimiter=delimiter), None
 
     def _odf_rows(self, index: int):
         from odf import teletype

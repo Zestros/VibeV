@@ -29,6 +29,7 @@ class TextViewer(BaseViewer):
         ".ps1", ".sql", ".css", ".scss", ".sass", ".less", ".vue",
         ".svelte", ".asm", ".dockerfile", ".gitignore", ".editorconfig",
         ".properties", ".gradle", ".cmake", ".makefile", ".diff", ".patch",
+        ".env", ".graphql", ".proto", ".sol", ".po", ".pot",
     )
 
     def __init__(self, parent=None) -> None:
@@ -102,6 +103,7 @@ class StructuredTextViewer(TextViewer):
         ".json", ".jsonl", ".ndjson", ".geojson", ".xml", ".xsd", ".xsl",
         ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".desktop",
         ".plist", ".html", ".htm",
+        ".ipynb", ".csvw",
     )
 
     @classmethod
@@ -115,7 +117,7 @@ class StructuredTextViewer(TextViewer):
         suffix = path.suffix.lower()
         formatted = text
         try:
-            if suffix in {".json", ".geojson"}:
+            if suffix in {".json", ".geojson", ".ipynb", ".csvw"}:
                 formatted = json.dumps(json.loads(text), ensure_ascii=False, indent=2)
             elif suffix in {".jsonl", ".ndjson"}:
                 formatted = "\n".join(

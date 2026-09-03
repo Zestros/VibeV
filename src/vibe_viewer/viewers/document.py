@@ -25,6 +25,7 @@ class DocumentViewer(BaseViewer):
     priority = 85
     extensions = (
         ".pdf", ".xps", ".oxps", ".epub", ".mobi", ".fb2", ".cbz", ".ps",
+        ".azw", ".azw3", ".djvu", ".djv",
     )
 
     def __init__(self, parent=None) -> None:
@@ -74,6 +75,9 @@ class DocumentViewer(BaseViewer):
 
     def load_file(self, path: Path) -> None:
         self.unload()
+        if path.suffix.lower() in {".azw", ".azw3", ".djvu", ".djv"}:
+            self._load_book_summary(path)
+            return
         try:
             import pymupdf
 
@@ -89,6 +93,31 @@ class DocumentViewer(BaseViewer):
         self.page_number.blockSignals(False)
         self.info.setText(f"{path.name} • {self._document.page_count} стр.")
         self._render_page(1)
+
+    def _load_book_summary(self, path: Path) -> None:
+        """Show safe metadata and embedded text for formats MuPDF cannot render."""
+        data = path.read_bytes()[:8 * 1024 * 1024]
+        signature = data[:32].hex(" ")
+        strings: list[str] = []
+        current = bytearray()
+        for byte in data:
+            if 32 <= byte < 127:
+                current.append(byte)
+            else:
+                if len(current) >= 5:
+                    strings.append(current.decode("ascii"))
+                current.clear()
+            if len(strings) >= 5000:
+                break
+        suffix = path.suffix[1:].upper()
+        self._path = path
+        self.page_number.setRange(1, 1)
+        self.info.setText(f"{path.name} • {suffix} • {path.stat().st_size} байт")
+        self.page_label.setText(
+            f"{suffix}: структурный предпросмотр\n\nСигнатура:\n{signature}\n\n"
+            + "\n".join(strings[:500])
+        )
+        self.page_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
     def _render_page(self, page_number: int | None = None) -> None:
         if self._document is None:
@@ -133,4 +162,3 @@ class DocumentViewer(BaseViewer):
         self._document = None
         self._path = None
         self.page_label.clear()
-

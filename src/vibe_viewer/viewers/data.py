@@ -27,6 +27,7 @@ class DataViewer(BaseViewer):
         ".sqlite", ".sqlite3", ".db", ".db3",
         ".npy", ".npz", ".parquet", ".feather", ".arrow",
         ".h5", ".hdf5", ".hdf", ".dcm", ".dicom",
+        ".fits", ".fts", ".fit", ".nc", ".cdf", ".mat", ".sav",
     )
 
     def __init__(self, parent=None) -> None:
@@ -60,8 +61,16 @@ class DataViewer(BaseViewer):
                 self._load_columnar(path)
             elif suffix in {".h5", ".hdf5", ".hdf"}:
                 self._load_hdf5(path)
-            else:
+            elif suffix in {".dcm", ".dicom"}:
                 self._load_dicom(path)
+            elif suffix in {".fits", ".fts", ".fit"}:
+                self._load_fits(path)
+            elif suffix in {".nc", ".cdf"}:
+                self._load_netcdf(path)
+            elif suffix == ".mat":
+                self._load_mat(path)
+            else:
+                self._load_sav(path)
         except ViewerError:
             raise
         except Exception as exc:
@@ -168,6 +177,55 @@ class DataViewer(BaseViewer):
         self.info.setText(f"{path.name} • DICOM • {len(lines)} полей")
         self.text.setHtml(f"<pre>{html.escape(chr(10).join(lines))}</pre>")
 
+    def _show_lines(self, title: str, lines: list[str]) -> None:
+        self.selector.setVisible(False)
+        self.stack.setCurrentWidget(self.text)
+        self.info.setText(title)
+        self.text.setHtml(f"<pre>{html.escape(chr(10).join(lines)[:2_000_000])}</pre>")
+
+    def _load_fits(self, path: Path) -> None:
+        from astropy.io import fits
+
+        lines = []
+        with fits.open(path, memmap=True) as document:
+            for index, unit in enumerate(document):
+                shape = getattr(unit.data, "shape", None)
+                lines.append(f"HDU {index}: {unit.name} • {type(unit).__name__} • shape={shape}")
+                lines.extend(f"  {key} = {value}" for key, value in list(unit.header.items())[:200])
+        self._show_lines(f"{path.name} • FITS • {len(document)} HDU", lines)
+
+    def _load_netcdf(self, path: Path) -> None:
+        import netCDF4
+
+        lines = []
+        with netCDF4.Dataset(path, "r") as dataset:
+            lines.append("Размерности:")
+            lines.extend(f"  {name}: {len(value)}" for name, value in dataset.dimensions.items())
+            lines.append("\nПеременные:")
+            lines.extend(f"  {name}: dtype={value.dtype}, shape={value.shape}" for name, value in dataset.variables.items())
+            lines.append("\nАтрибуты:")
+            lines.extend(f"  {name} = {dataset.getncattr(name)}" for name in dataset.ncattrs())
+        self._show_lines(f"{path.name} • NetCDF", lines)
+
+    def _load_mat(self, path: Path) -> None:
+        from scipy.io import whosmat
+
+        variables = whosmat(path)
+        lines = [f"{name}: shape={shape}, type={kind}" for name, shape, kind in variables]
+        self._show_lines(f"{path.name} • MATLAB • {len(lines)} переменных", lines)
+
+    def _load_sav(self, path: Path) -> None:
+        import pyreadstat
+
+        frame, metadata = pyreadstat.read_sav(path, row_limit=2000)
+        self.selector.setVisible(False)
+        self.stack.setCurrentWidget(self.table)
+        shown_rows, shown_columns, truncated = fill_table(
+            self.table, frame.itertuples(index=False, name=None), headers=list(frame.columns)
+        )
+        note = " • показаны первые 2000 строк" if truncated else ""
+        self.info.setText(f"{path.name} • SPSS • {shown_rows}×{shown_columns}{note} • {metadata.file_label or ''}")
+
     def unload(self) -> None:
         if self._sqlite_connection is not None:
             self._sqlite_connection.close()
@@ -178,4 +236,3 @@ class DataViewer(BaseViewer):
         self.selector.blockSignals(False)
         self.table.clear()
         self.text.clear()
-

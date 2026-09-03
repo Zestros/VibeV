@@ -18,7 +18,7 @@ class MessageAndContactViewer(BaseViewer):
     name = "Messages, contacts and calendars"
     category = "Messages and personal data"
     priority = 60
-    extensions = (".eml", ".mbox", ".vcf", ".vcard", ".ics", ".ical")
+    extensions = (".eml", ".mbox", ".vcf", ".vcard", ".ics", ".ical", ".msg", ".oft", ".pst")
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -36,6 +36,10 @@ class MessageAndContactViewer(BaseViewer):
                 content, details = self._render_eml(path)
             elif path.suffix.lower() == ".mbox":
                 content, details = self._render_mbox(path)
+            elif path.suffix.lower() in {".msg", ".oft"}:
+                content, details = self._render_msg(path)
+            elif path.suffix.lower() == ".pst":
+                content, details = self._render_pst(path)
             else:
                 content, details = self._render_lines(path)
         except Exception as exc:
@@ -84,3 +88,24 @@ class MessageAndContactViewer(BaseViewer):
                 rows.append(f"<tr><th>{html.escape(key)}</th><td>{html.escape(value)}</td></tr>")
         note = " • обрезан" if truncated else ""
         return "<table border='1' cellspacing='0' cellpadding='5'>" + "".join(rows) + "</table>", f"структурированный текст • {encoding}{note}"
+
+    @staticmethod
+    def _render_msg(path: Path) -> tuple[str, str]:
+        import extract_msg
+
+        message = extract_msg.Message(str(path))
+        try:
+            fields = (("От", message.sender), ("Кому", message.to), ("Дата", message.date), ("Тема", message.subject))
+            headers = "".join(f"<p><b>{label}:</b> {html.escape(str(value or ''))}</p>" for label, value in fields)
+            body = f"<pre>{html.escape(message.body or '')}</pre>"
+            attachments = "".join(f"<li>{html.escape(item.longFilename or item.shortFilename or 'без имени')}</li>" for item in message.attachments)
+            return headers + body + (f"<h3>Вложения</h3><ul>{attachments}</ul>" if attachments else ""), f"Outlook MSG • {len(message.attachments)} вложений"
+        finally:
+            message.close()
+
+    @staticmethod
+    def _render_pst(path: Path) -> tuple[str, str]:
+        signature = path.read_bytes()[:32]
+        if not signature.startswith(b"!BDN"):
+            raise ViewerError("Неверная сигнатура Outlook PST")
+        return f"<pre>{html.escape(signature.hex(' '))}</pre>", f"Outlook PST • {path.stat().st_size} байт • безопасный просмотр заголовка"

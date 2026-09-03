@@ -49,6 +49,8 @@ PILLOW_FORMATS_BY_SUFFIX = {
     ".pcx": ("PCX",),
     ".xpm": ("XPM",),
     ".xbm": ("XBM",),
+    ".cur": ("CUR",),
+    ".hdr": ("HDR",),
 }
 
 
@@ -61,7 +63,8 @@ class ImageViewer(BaseViewer):
         ".webp", ".tif", ".tiff", ".ico", ".icns", ".ppm", ".pgm", ".pbm",
         ".pnm", ".pfm", ".tga", ".dds", ".qoi", ".avif", ".heic", ".heif",
         ".psd", ".jp2", ".j2k", ".jpx", ".sgi", ".pcx", ".xpm", ".xbm",
-        ".svg",
+        ".svg", ".dng", ".cr2", ".nef", ".arw", ".orf", ".rw2",
+        ".hdr", ".exr", ".cur", ".ani",
     )
 
     def __init__(self, parent=None) -> None:
@@ -125,9 +128,53 @@ class ImageViewer(BaseViewer):
         self._fit_to_window()
 
     def _load_pixmap(self, path: Path) -> tuple[QPixmap, str, str]:
-        if path.suffix.lower() == ".svg":
+        suffix = path.suffix.lower()
+        if suffix == ".svg":
             pixmap = QPixmap(str(path))
             return pixmap, "SVG", "vector"
+
+        if suffix == ".ani":
+            data = path.read_bytes()
+            offset = 0
+            while True:
+                offset = data.find(b"icon", offset)
+                if offset < 0 or offset + 8 > len(data):
+                    break
+                size = int.from_bytes(data[offset + 4:offset + 8], "little")
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data[offset + 8:offset + 8 + size]):
+                    return pixmap, "ANI", "first frame"
+                offset += 8 + size
+            raise ViewerError("В ANI не найден декодируемый кадр курсора")
+
+        if suffix in {".dng", ".cr2", ".nef", ".arw", ".orf", ".rw2"}:
+            try:
+                import rawpy
+                from PIL import Image
+                from PIL.ImageQt import ImageQt
+
+                with rawpy.imread(str(path)) as raw:
+                    rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=False)
+                pil_image = Image.fromarray(rgb)
+                return QPixmap.fromImage(QImage(ImageQt(pil_image)).copy()), suffix[1:].upper(), "RAW"
+            except Exception as exc:
+                raise ViewerError(f"Не удалось проявить RAW: {exc}") from exc
+
+        if suffix in {".hdr", ".exr"}:
+            try:
+                import imageio.v3 as iio
+                import numpy as np
+                from PIL import Image
+                from PIL.ImageQt import ImageQt
+
+                pixels = np.asarray(iio.imread(path), dtype=np.float32)
+                pixels = np.nan_to_num(pixels)
+                maximum = float(np.percentile(pixels, 99.5)) or 1.0
+                pixels = np.clip(pixels / maximum, 0, 1) ** (1 / 2.2)
+                pil_image = Image.fromarray((pixels * 255).astype("uint8")).convert("RGBA")
+                return QPixmap.fromImage(QImage(ImageQt(pil_image)).copy()), suffix[1:].upper(), "tone mapped"
+            except Exception as exc:
+                raise ViewerError(f"Не удалось открыть HDR-изображение: {exc}") from exc
 
         reader = QImageReader(str(path))
         reader.setAutoTransform(True)
@@ -146,7 +193,7 @@ class ImageViewer(BaseViewer):
             except ImportError:
                 pass
 
-            if path.suffix.lower() == ".psd":
+            if suffix == ".psd":
                 try:
                     from psd_tools import PSDImage
 
@@ -154,7 +201,7 @@ class ImageViewer(BaseViewer):
                 except ImportError:
                     pil_image = Image.open(path, formats=("PSD",))
             else:
-                allowed_formats = PILLOW_FORMATS_BY_SUFFIX.get(path.suffix.lower())
+                allowed_formats = PILLOW_FORMATS_BY_SUFFIX.get(suffix)
                 if not allowed_formats:
                     raise ViewerError("Формат изображения не разрешён")
                 pil_image = Image.open(path, formats=allowed_formats)

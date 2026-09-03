@@ -23,9 +23,10 @@ class ArchiveViewer(BaseViewer):
     category = "Archives and packages"
     priority = 70
     extensions = (
-        ".zip", ".jar", ".war", ".apk", ".whl", ".cbz",
+        ".zip", ".jar", ".war", ".apk", ".whl", ".cbz", ".cbr",
         ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2",
         ".tar.xz", ".txz", ".gz", ".bz2", ".xz", ".7z",
+        ".rar", ".cab", ".iso", ".cpio", ".ar", ".deb", ".rpm", ".zst", ".lz4",
     )
 
     def __init__(self, parent=None) -> None:
@@ -49,6 +50,27 @@ class ArchiveViewer(BaseViewer):
             elif lower_name.endswith(".7z"):
                 rows, total_size = self._seven_zip_rows(path)
                 archive_type = "7Z"
+            elif lower_name.endswith((".rar", ".cbr")):
+                rows, total_size = self._rar_rows(path)
+                archive_type = "RAR"
+            elif lower_name.endswith(".iso"):
+                rows, total_size = self._iso_rows(path)
+                archive_type = "ISO"
+            elif lower_name.endswith((".ar", ".deb")):
+                rows, total_size = self._ar_rows(path)
+                archive_type = "DEB" if lower_name.endswith(".deb") else "AR"
+            elif lower_name.endswith(".rpm"):
+                rows, total_size = self._rpm_rows(path)
+                archive_type = "RPM"
+            elif path.suffix.lower() in {".zst", ".lz4"}:
+                rows, total_size = self._modern_stream_rows(path)
+                archive_type = path.suffix[1:].upper()
+            elif lower_name.endswith(".cpio"):
+                rows, total_size = self._cpio_rows(path)
+                archive_type = "CPIO"
+            elif lower_name.endswith(".cab"):
+                rows, total_size = self._cab_rows(path)
+                archive_type = "CAB"
             elif path.suffix.lower() in {".gz", ".bz2", ".xz"}:
                 rows, total_size = self._single_stream_rows(path)
                 archive_type = path.suffix[1:].upper()
@@ -144,6 +166,122 @@ class ArchiveViewer(BaseViewer):
         display_size = f"> {_human_size(limit)}" if total > limit else _human_size(total)
         output_name = path.stem
         return [(output_name, display_size, _human_size(path.stat().st_size), "—", "поток")], total
+
+    @staticmethod
+    def _rar_rows(path: Path):
+        import rarfile
+
+        rows, total = [], 0
+        with rarfile.RarFile(path) as archive:
+            for item in archive.infolist()[:MAX_ARCHIVE_MEMBERS]:
+                total += item.file_size
+                rows.append((item.filename, _human_size(item.file_size), _human_size(item.compress_size), str(item.date_time), "папка" if item.isdir() else "файл"))
+        return rows, total
+
+    @staticmethod
+    def _iso_rows(path: Path):
+        import pycdlib
+
+        iso, rows, total = pycdlib.PyCdlib(), [], 0
+        iso.open(str(path))
+        try:
+            for root, directories, files in iso.walk(iso_path="/"):
+                for name in list(directories) + list(files):
+                    rows.append((f"{root}/{name}", "—", "—", "—", "элемент"))
+                    if len(rows) >= MAX_ARCHIVE_MEMBERS:
+                        break
+        finally:
+            iso.close()
+        return rows, total
+
+    @staticmethod
+    def _ar_rows(path: Path):
+        data, offset, rows, total = path.read_bytes(), 8, [], 0
+        if not data.startswith(b"!<arch>\n"):
+            raise ViewerError("Неверная сигнатура AR")
+        while offset + 60 <= len(data) and len(rows) < MAX_ARCHIVE_MEMBERS:
+            header = data[offset:offset + 60]
+            name = header[:16].decode("ascii", errors="replace").strip().rstrip("/")
+            try:
+                size = int(header[48:58].decode("ascii").strip())
+            except ValueError:
+                break
+            rows.append((name, _human_size(size), "—", "—", "файл"))
+            total += size
+            offset += 60 + size + size % 2
+        return rows, total
+
+    @staticmethod
+    def _rpm_rows(path: Path):
+        import rpmfile
+
+        rows, total = [], 0
+        with rpmfile.open(str(path)) as archive:
+            for item in archive.getmembers()[:MAX_ARCHIVE_MEMBERS]:
+                total += item.size
+                rows.append((item.name, _human_size(item.size), "—", str(item.mtime), "файл"))
+        return rows, total
+
+    @staticmethod
+    def _modern_stream_rows(path: Path):
+        if path.suffix.lower() == ".zst":
+            import zstandard
+
+            with path.open("rb") as source, zstandard.ZstdDecompressor().stream_reader(source) as stream:
+                data = stream.read(64 * 1024 * 1024 + 1)
+        else:
+            import lz4.frame
+
+            with lz4.frame.open(path, "rb") as stream:
+                data = stream.read(64 * 1024 * 1024 + 1)
+        return [(path.stem, _human_size(len(data)), _human_size(path.stat().st_size), "—", "поток")], len(data)
+
+    @staticmethod
+    def _cpio_rows(path: Path):
+        """List portable SVR4 'newc' CPIO members."""
+        data, offset, rows, total = path.read_bytes(), 0, [], 0
+        while offset + 110 <= len(data) and len(rows) < MAX_ARCHIVE_MEMBERS:
+            header = data[offset:offset + 110]
+            if header[:6] not in {b"070701", b"070702"}:
+                if not rows:
+                    raise ViewerError("Поддерживается CPIO в формате newc/crc")
+                break
+            try:
+                mode = int(header[14:22], 16)
+                mtime = int(header[46:54], 16)
+                size = int(header[54:62], 16)
+                name_size = int(header[94:102], 16)
+            except ValueError as exc:
+                raise ViewerError("Повреждён заголовок CPIO") from exc
+            offset += 110
+            name = data[offset:offset + name_size - 1].decode("utf-8", errors="replace")
+            offset = (offset + name_size + 3) & ~3
+            if name == "TRAILER!!!":
+                break
+            rows.append((name, _human_size(size), "—", datetime.fromtimestamp(mtime).isoformat(sep=" ", timespec="minutes"), "папка" if mode & 0o170000 == 0o040000 else "файл"))
+            total += size
+            offset = (offset + size + 3) & ~3
+        return rows, total
+
+    @staticmethod
+    def _cab_rows(path: Path):
+        """Show CAB header information without calling platform extractors."""
+        import struct
+
+        header = path.read_bytes()[:36]
+        if len(header) < 36 or not header.startswith(b"MSCF"):
+            raise ViewerError("Неверная сигнатура Microsoft Cabinet")
+        cabinet_size = struct.unpack_from("<I", header, 8)[0]
+        file_offset = struct.unpack_from("<I", header, 16)[0]
+        version_minor, version_major = header[24], header[25]
+        folder_count, file_count = struct.unpack_from("<HH", header, 26)
+        rows = [
+            ("Версия", f"{version_major}.{version_minor}", "—", "—", "метаданные"),
+            ("Папки", str(folder_count), "—", "—", "метаданные"),
+            ("Файлы", str(file_count), "—", "—", "метаданные"),
+            ("Смещение таблицы файлов", str(file_offset), "—", "—", "метаданные"),
+        ]
+        return rows, cabinet_size
 
 
 def _human_size(value: int) -> str:
